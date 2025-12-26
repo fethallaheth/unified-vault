@@ -31,6 +31,7 @@ contract UnifiedVault is ERC6909, Ownable {
     event ActiveStrategySet(uint256 indexed id, uint256 index);
     event DepositToStrategy(uint256 indexed id, address indexed strategy, uint256 sharesMinted, uint256 assetsAdded);
     event WithdrawFromStrategy(uint256 indexed id, address indexed strategy, uint256 sharesBurned, uint256 out0, uint256 out1);
+    event Rebalanced(uint256 indexed id, address fromStrat, address toStrat, uint256 amount);
 
     constructor() Ownable(msg.sender) {}
 
@@ -55,6 +56,14 @@ contract UnifiedVault is ERC6909, Ownable {
         _mint(msg.sender, id, shares);
 
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
+
+        
+        // Automatically deposit funds into the Active Strategy
+        address activeStrat = _strategyFor(id, activeStrategy[id]);
+        if (activeStrat != address(0)) {
+            IStrategy(activeStrat).deposit(assets);
+            emit DepositToStrategy(id, activeStrat, shares, assets);
+        }
     }
 
     function withdraw(uint256 id, uint256 shares) external {
@@ -64,11 +73,24 @@ contract UnifiedVault is ERC6909, Ownable {
 
         uint256 prevTotalShares = totalShares[id];
         require(prevTotalShares > 0, "No shares exist");
+        
         uint256 prevTotalAssets = totalAssets[id];
 
         // assets to send = shares * contractBalance / prevTotalShares  (includes yield)
         uint256 contractBalance = _currentTotalAssets(id);
         uint256 assetsToSend = _mulDiv(shares, contractBalance, prevTotalShares, Math.Rounding.Ceil);
+
+        // ====== NEW ======
+        // If we don't have enough idle balance, pull from Active Strategy
+        uint256 idleBalance = IERC20(asset).balanceOf(address(this));
+        if (idleBalance < assetsToSend) {
+            uint256 needed = assetsToSend - idleBalance;
+            address activeStrat = _strategyFor(id, activeStrategy[id]);
+            if (activeStrat != address(0)) {
+                IStrategy(activeStrat).withdraw(needed);
+            }
+        }
+        // ==================
 
         // principal portion to remove from totalAssets
         uint256 principalRemoved;
@@ -121,6 +143,13 @@ contract UnifiedVault is ERC6909, Ownable {
         require(assetToken[id] != address(0), "Asset not registered");
         require(strategy != address(0), "ZERO_STRAT");
         strategies[id].push(strategy);
+        
+        // ====== NEW ======
+        // Approve max amount for this strategy to save gas on deposits
+        IERC20 token = IERC20(assetToken[id]);
+        token.forceApprove(strategy, type(uint256).max);
+        // ==================
+
         emit StrategyAdded(id, strategy);
     }
 
@@ -149,110 +178,34 @@ contract UnifiedVault is ERC6909, Ownable {
         if (index >= strategies[id].length) index = activeStrategy[id];
         return strategies[id][index];
     }
-
-    // Deposit into a strategy-backed pool. Caller supplies tokens and precomputed liquidityDelta.
-    // Caller must ensure necessary tokens are transferred to the strategy OR strategy can pull them.
-    // `params` is strategy-specific ABI and allows flexibility for liquidity, staking, loans, etc.
-    // NOTE
-    // add a logic rebalancing the used vault and add a prefered vault so that depositToStrategy uses the prefered vault 
-    // ill remove this shit later (depositTostrategy)
-
-
-
-
-
-
-    // --- 
-
-
-    function depositToStrategy(uint256 id, bytes calldata params) external {
-        address strat = _strategyFor(id, activeStrategy[id]);
-        require(strat != address(0), "NO_STRAT");
-
-        IStrategy s = IStrategy(strat);
-
-        uint256 prevTotalAssets = _currentTotalAssets(id);
-        uint256 prevTotalShares = totalShares[id];
-
-        // call strategy to deposit (strategy is responsible for pulling tokens or using pre-transferred funds)
-        s.deposit(params);
-
-        uint256 newTotalAssets = _currentTotalAssets(id);
-        require(newTotalAssets >= prevTotalAssets, "STRAT_INV");
-        uint256 addedAssets = newTotalAssets - prevTotalAssets;
-
-        uint256 shares;
-        if (prevTotalShares == 0 || prevTotalAssets == 0) {
-            shares = addedAssets;
-        } else {
-            shares = _mulDiv(addedAssets, prevTotalShares, prevTotalAssets, Math.Rounding.Floor);
-        }
-        require(shares > 0, "ZERO_SHARES");
-
-        totalAssets[id] = newTotalAssets;
-        totalShares[id] = prevTotalShares + shares;
-        _mint(msg.sender, id, shares);
-
-        emit DepositToStrategy(id, strat, shares, addedAssets);
+    
+    // ====== NEW ======
+    // Allow manager to rebalance funds between strategies
+    function rebalance(uint256 id, uint256 fromIndex, uint256 toIndex, uint256 amount) external onlyOwner {
+        require(fromIndex != toIndex, "Same strategy");
+        require(amount > 0, "Amount > 0");
+        
+        address fromStrat = _strategyFor(id, fromIndex);
+        address toStrat = _strategyFor(id, toIndex);
+        
+        require(fromStrat != address(0) && toStrat != address(0), "Invalid strat");
+        
+        // 1. Withdraw from 'From'
+        IStrategy(fromStrat).withdraw(amount);
+        
+        // 2. Deposit to 'To'
+        // (Assets are now in this address via the withdraw return)
+        IStrategy(toStrat).deposit(amount);
+        
+        emit Rebalanced(id, fromStrat, toStrat, amount);
     }
-
-    // Withdraw from strategy by burning shares. Vault computes liquidity to remove.
-    // Withdraw from strategy by burning shares. `params` is strategy-specific ABI.
-    function withdrawFromStrategy(uint256 id, uint256 shares, bytes calldata params) external {
-        address strat = _strategyFor(id, activeStrategy[id]);
-        require(strat != address(0), "NO_STRAT");
-        require(balanceOf(msg.sender, id) >= shares, "NOT_ENOUGH_SHARES");
-
-        IStrategy s = IStrategy(strat);
-        address[] memory toks = s.tokens();
-
-        uint256 prevTotalAssets = _currentTotalAssets(id);
-        uint256 prevTotalShares = totalShares[id];
-        require(prevTotalShares > 0, "NO_SHARES");
-
-        // snapshot token balances to measure received amounts
-        uint256[] memory beforeBalances = new uint256[](toks.length);
-        for (uint256 i = 0; i < toks.length; i++) beforeBalances[i] = IERC20(toks[i]).balanceOf(address(this));
-
-        // call strategy to withdraw -> strategy should transfer tokens to this vault
-        s.withdraw(params);
-
-        // compute out amounts and forward to user after accounting
-        // We avoid storing `after` and `out` arrays to reduce stack/memory usage.
-
-        // burn shares and update accounting (remove principal portion)
-        uint256 principalRemoved;
-        if (shares == prevTotalShares) {
-            principalRemoved = totalAssets[id];
-            totalAssets[id] = 0;
-            totalShares[id] = 0;
-        } else {
-            principalRemoved = _mulDiv(shares, totalAssets[id], prevTotalShares, Math.Rounding.Floor);
-            totalAssets[id] = totalAssets[id] - principalRemoved;
-            totalShares[id] = prevTotalShares - shares;
-        }
-
-        _burn(msg.sender, id, shares);
-
-        // forward received tokens to user and compute first two out amounts for event
-        uint256 firstOut = 0;
-        uint256 secondOut = 0;
-        for (uint256 i = 0; i < toks.length; i++) {
-            uint256 afterBal = IERC20(toks[i]).balanceOf(address(this));
-            uint256 out = 0;
-            if (afterBal > beforeBalances[i]) out = afterBal - beforeBalances[i];
-            if (out > 0) IERC20(toks[i]).safeTransfer(msg.sender, out);
-            if (i == 0) firstOut = out;
-            if (i == 1) secondOut = out;
-        }
-
-        emit WithdrawFromStrategy(id, strat, shares, firstOut, secondOut);
-    }
+    // ==================
 
     ///////////////////////////////// INTERNAL LOGIC /////////////////////////////////
 
     function _currentTotalAssets(uint256 id) internal view returns (uint256) {
         // If strategies exist for this asset, sum their reported liquidity
+        address asset = assetToken[id];
         if (strategies[id].length > 0) {
             uint256 sum = 0;
             for (uint256 i = 0; i < strategies[id].length; i++) {
@@ -261,11 +214,15 @@ contract UnifiedVault is ERC6909, Ownable {
                     sum += IStrategy(strat).totalAssets();
                 }
             }
+            // Add idle balance in vault
+            if (asset != address(0)) {
+                sum += IERC20(asset).balanceOf(address(this));
+            }
             return sum;
         }
 
         // Fallback to single-token pool behavior
-        address asset = assetToken[id];
+        // `asset` already declared above
         // @note not supporting native ETH for now
         if (asset == address(0)) return 0;
         return IERC20(asset).balanceOf(address(this));
