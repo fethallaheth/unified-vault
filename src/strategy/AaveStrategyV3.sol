@@ -5,16 +5,15 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IStrategy} from "../interfaces/IStrategy.sol";
 import {IAavePool} from "../interfaces/IAavePool.sol";
-import {IAaveAddressesProvider} from "../interfaces/IAaveAddressesProvider.sol";
+import {IPoolAddressesProvider} from "../interfaces/IPoolAddressesProvider.sol";
+import {BaseStrategy} from "./Base/BaseStrategy.sol";
 
-/**
- * @title AaveStrategyV3
- * @notice Simple Aave V3 Strategy without external dependencies.
- */
-contract AaveStrategyV3 is IStrategy {
+/// @title AaveStrategyV3 Contract
+/// @author fethallahEth
+/// @notice Strategy for interacting with Aave V3 protocol.
+/// @dev This contract inherits from BaseStrategy and implements deposit, withdraw, and totalAssets functions for Aave V3.
+contract AaveStrategyV3 is BaseStrategy {
     using SafeERC20 for IERC20;
-
-    // --- State Variables ---
 
     IERC20 public immutable asset;
     IAavePool public immutable aavePool;
@@ -22,42 +21,27 @@ contract AaveStrategyV3 is IStrategy {
 
     uint16 private constant REFERRAL_CODE = 0;
 
-    // --- Constructor ---
-
-    /**
-     * @param _asset The underlying asset address (e.g., USDC).
-     * @param _poolProvider The Aave PoolAddressesProvider address for your chain.
-     */
-    constructor(address _asset, address _poolProvider) {
+    constructor(address _vault, address _asset, address _poolProvider) BaseStrategy(_vault) {
         asset = IERC20(_asset);
-        
-        // 1. Get the Pool contract from the Provider
-        IAaveAddressesProvider provider = IAaveAddressesProvider(_poolProvider);
+
+        IPoolAddressesProvider  provider = IPoolAddressesProvider(_poolProvider);
         aavePool = IAavePool(provider.getPool());
 
-        // 2. Get the aToken address from the Reserve Data
         IAavePool.ReserveData memory reserveData = aavePool.getReserveData(_asset);
         aToken = IERC20(reserveData.aTokenAddress);
 
-        // 3. Give Aave Max Approval
-        asset.forceApprove(address(aavePool), type(uint256).max);
+        SafeERC20.forceApprove(asset, address(aavePool), type(uint256).max);
     }
 
-    // --- Core Strategy Functions ---
-
-    // NOTE ADD ONLYVAULT 
     function deposit(uint256 amount) external override {
         require(amount > 0, "Amount must be > 0");
         aavePool.supply(address(asset), amount, address(this), REFERRAL_CODE);
     }
-
+    
+    // this is not work with wierd tokens 
     function withdraw(uint256 amount) external override returns (uint256) {
-        uint256 balanceBefore = asset.balanceOf(address(this));
-        aavePool.withdraw(address(asset), amount, address(this));
-        uint256 balanceAfter = asset.balanceOf(address(this));
-
-        uint256 amountWithdrawn = balanceAfter - balanceBefore;
-        
+        uint256 amountWithdrawn = aavePool.withdraw(address(asset), amount, address(this));
+        // @note it should to transfer it to the user who call the withdraw on the vault 
         asset.safeTransfer(msg.sender, amountWithdrawn);
         return amountWithdrawn;
     }
@@ -65,4 +49,6 @@ contract AaveStrategyV3 is IStrategy {
     function totalAssets() external view override returns (uint256) {
         return aToken.balanceOf(address(this));
     }
+
+
 }

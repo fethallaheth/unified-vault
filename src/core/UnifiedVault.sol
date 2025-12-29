@@ -30,7 +30,9 @@ contract UnifiedVault is ERC6909, Ownable {
     event StrategyRemoved(uint256 indexed id, address strategy);
     event ActiveStrategySet(uint256 indexed id, uint256 index);
     event DepositToStrategy(uint256 indexed id, address indexed strategy, uint256 sharesMinted, uint256 assetsAdded);
-    event WithdrawFromStrategy(uint256 indexed id, address indexed strategy, uint256 sharesBurned, uint256 out0, uint256 out1);
+    event WithdrawFromStrategy(
+        uint256 indexed id, address indexed strategy, uint256 sharesBurned, uint256 out0, uint256 out1
+    );
     event Rebalanced(uint256 indexed id, address fromStrat, address toStrat, uint256 amount);
 
     constructor() Ownable(msg.sender) {}
@@ -57,7 +59,6 @@ contract UnifiedVault is ERC6909, Ownable {
 
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
 
-        
         // Automatically deposit funds into the Active Strategy
         address activeStrat = _strategyFor(id, activeStrategy[id]);
         if (activeStrat != address(0)) {
@@ -73,7 +74,7 @@ contract UnifiedVault is ERC6909, Ownable {
 
         uint256 prevTotalShares = totalShares[id];
         require(prevTotalShares > 0, "No shares exist");
-        
+
         uint256 prevTotalAssets = totalAssets[id];
 
         // assets to send = shares * contractBalance / prevTotalShares  (includes yield)
@@ -143,7 +144,7 @@ contract UnifiedVault is ERC6909, Ownable {
         require(assetToken[id] != address(0), "Asset not registered");
         require(strategy != address(0), "ZERO_STRAT");
         strategies[id].push(strategy);
-        
+
         // ====== NEW ======
         // Approve max amount for this strategy to save gas on deposits
         IERC20 token = IERC20(assetToken[id]);
@@ -178,25 +179,25 @@ contract UnifiedVault is ERC6909, Ownable {
         if (index >= strategies[id].length) index = activeStrategy[id];
         return strategies[id][index];
     }
-    
+
     // ====== NEW ======
     // Allow manager to rebalance funds between strategies
     function rebalance(uint256 id, uint256 fromIndex, uint256 toIndex, uint256 amount) external onlyOwner {
         require(fromIndex != toIndex, "Same strategy");
         require(amount > 0, "Amount > 0");
-        
+
         address fromStrat = _strategyFor(id, fromIndex);
         address toStrat = _strategyFor(id, toIndex);
-        
+
         require(fromStrat != address(0) && toStrat != address(0), "Invalid strat");
-        
+
         // 1. Withdraw from 'From'
         IStrategy(fromStrat).withdraw(amount);
-        
+
         // 2. Deposit to 'To'
         // (Assets are now in this address via the withdraw return)
         IStrategy(toStrat).deposit(amount);
-        
+
         emit Rebalanced(id, fromStrat, toStrat, amount);
     }
     // ==================

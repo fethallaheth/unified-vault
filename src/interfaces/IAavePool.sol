@@ -24,12 +24,7 @@ interface IAavePool {
      *   is a different wallet
      * @param referralCode Code used to register the integrator into the Referral Program
      */
-    function supply(
-        address asset,
-        uint256 amount,
-        address onBehalfOf,
-        uint16 referralCode
-    ) external;
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
 
     /**
      * @notice Withdraws an `amount` of underlying asset from the reserve, burning the equivalent aTokens owned
@@ -38,11 +33,7 @@ interface IAavePool {
      * @param to Address that will receive the underlying asset
      * @return The final amount withdrawn
      */
-    function withdraw(
-        address asset,
-        uint256 amount,
-        address to
-    ) external returns (uint256);
+    function withdraw(address asset, uint256 amount, address to) external returns (uint256);
 
     /**
      * @notice Returns the state and configuration of the reserve
