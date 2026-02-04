@@ -19,7 +19,7 @@ The protocol consists of three distinct layers:
 
 1.  **The Vault (ERC-6909):** A single immutable contract that handles user deposits, accounting, and share issuance.
 2.  **The Strategies:** Modular, non-tokenized contracts that wrap specific DeFi protocols (e.g., Aave, Morpho).
-3.  **The Allocator (Off-Chain):** A sophisticated bot that monitors APYs across chains and executes `rebalance` transactions to move funds to the best opportunities.
+
 
 ### Visual Flow
 
@@ -63,10 +63,6 @@ An off-chain script (Node.js/Python) running on a secure server.
 
 ## 🚀 Getting Started
 
-### Prerequisites
-- Node.js >= 16
-- Yarn or NPM
-- Git
 
 ### Installation
 

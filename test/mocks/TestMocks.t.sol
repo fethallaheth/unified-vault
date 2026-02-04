@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IMorpho} from "../../src/interfaces/IMorpho.sol";
 import {IAavePool} from "../../src/interfaces/IAavePool.sol";
 import {IPoolAddressesProvider} from "../../src/interfaces/IPoolAddressesProvider.sol";
+import {IStrategy} from "../../src/interfaces/IStrategy.sol";
 
 /// @title MockERC20
 /// @notice Standard ERC20 mock for testing
@@ -128,5 +130,49 @@ contract MockPoolAddressesProvider is IPoolAddressesProvider {
 
     function getPool() external view override returns (address) {
         return pool;
+    }
+}
+
+/// @title MockStrategy
+/// @notice Mock strategy for testing UnifiedVault
+contract MockStrategy is IStrategy {
+    using SafeERC20 for IERC20;
+
+    address public immutable vault;
+    IERC20 public immutable asset;
+    uint256 public managedAssets;
+
+    event Deposited(uint256 amount);
+    event Withdrawn(uint256 amount);
+
+    constructor(address _vault, address _asset) {
+        vault = _vault;
+        asset = IERC20(_asset);
+    }
+
+    function deposit(uint256 amount) external override {
+        // Pull tokens from vault (vault has already approved)
+        asset.safeTransferFrom(vault, address(this), amount);
+        managedAssets += amount;
+        emit Deposited(amount);
+    }
+
+    function withdraw(uint256 amount) external override returns (uint256) {
+        if (amount > managedAssets) amount = managedAssets;
+        managedAssets -= amount;
+        asset.safeTransfer(msg.sender, amount);
+        emit Withdrawn(amount);
+        return amount;
+    }
+
+    function totalAssets() external view override returns (uint256) {
+        return managedAssets;
+    }
+
+    // Helper to simulate yield generation
+    function simulateYield(uint256 amount) external {
+        // Mint tokens to simulate yield
+        MockERC20(address(asset)).mint(address(this), amount);
+        managedAssets += amount;
     }
 }
