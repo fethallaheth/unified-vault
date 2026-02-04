@@ -21,18 +21,16 @@ contract UnifiedVault is ERC6909, Ownable {
     mapping(uint256 => uint256) public activeStrategy; // assetId => active strategy index
 
     // Virtual values to mitigate donation/inflation attacks (ERC-4626 style)
+    // this expected to works only with tokens with 18 decimals 
     uint256 internal constant VIRTUAL_SHARES = 10 ** 18;
     uint256 internal constant VIRTUAL_ASSETS = 1;
 
-    // Use external `IStrategy` interface from src/interfaces/IStrategy.sol
 
     event StrategyAdded(uint256 indexed id, address strategy);
     event StrategyRemoved(uint256 indexed id, address strategy);
     event ActiveStrategySet(uint256 indexed id, uint256 index);
     event DepositToStrategy(uint256 indexed id, address indexed strategy, uint256 sharesMinted, uint256 assetsAdded);
-    event WithdrawFromStrategy(
-        uint256 indexed id, address indexed strategy, uint256 sharesBurned, uint256 out0, uint256 out1
-    );
+    event WithdrawFromStrategy(uint256 indexed id, address indexed strategy, uint256 sharesBurned, uint256 out0, uint256 out1);
     event Rebalanced(uint256 indexed id, address fromStrat, address toStrat, uint256 amount);
 
     constructor() Ownable(msg.sender) {}
@@ -81,7 +79,6 @@ contract UnifiedVault is ERC6909, Ownable {
         uint256 contractBalance = _currentTotalAssets(id);
         uint256 assetsToSend = _mulDiv(shares, contractBalance, prevTotalShares, Math.Rounding.Ceil);
 
-        // ====== NEW ======
         // If we don't have enough idle balance, pull from Active Strategy
         uint256 idleBalance = IERC20(asset).balanceOf(address(this));
         if (idleBalance < assetsToSend) {
@@ -89,6 +86,7 @@ contract UnifiedVault is ERC6909, Ownable {
             address activeStrat = _strategyFor(id, activeStrategy[id]);
             if (activeStrat != address(0)) {
                 IStrategy(activeStrat).withdraw(needed);
+                emit WithdrawFromStrategy(id, activeStrat, shares, needed, 0);
             }
         }
         // ==================
@@ -180,7 +178,6 @@ contract UnifiedVault is ERC6909, Ownable {
         return strategies[id][index];
     }
 
-    // ====== NEW ======
     // Allow manager to rebalance funds between strategies
     function rebalance(uint256 id, uint256 fromIndex, uint256 toIndex, uint256 amount) external onlyOwner {
         require(fromIndex != toIndex, "Same strategy");

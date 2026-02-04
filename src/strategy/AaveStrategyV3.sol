@@ -33,13 +33,13 @@ contract AaveStrategyV3 is BaseStrategy {
         SafeERC20.forceApprove(asset, address(aavePool), type(uint256).max);
     }
 
-    function deposit(uint256 amount) external override {
+    function deposit(uint256 amount) external override onlyVault {
         require(amount > 0, "Amount must be > 0");
         aavePool.supply(address(asset), amount, address(this), REFERRAL_CODE);
     }
-    
-    // this is not work with wierd tokens 
-    function withdraw(uint256 amount) external override returns (uint256) {
+
+    // this is not work with wierd tokens
+    function withdraw(uint256 amount) external override onlyVault returns (uint256) {
         uint256 amountWithdrawn = aavePool.withdraw(address(asset), amount, address(this));
         // @note it should to transfer it to the user who call the withdraw on the vault 
         asset.safeTransfer(msg.sender, amountWithdrawn);

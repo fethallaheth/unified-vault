@@ -41,12 +41,12 @@ contract MorphoStrategy is BaseStrategy {
     }
 
 
-    function deposit(uint256 amount) external override {
+    function deposit(uint256 amount) external override onlyVault {
         require(amount > 0, "Amount must be > 0");
         morpho.supply(marketParams, amount, address(this), "");
     }
 
-    function withdraw(uint256 amount) external override returns (uint256) {
+    function withdraw(uint256 amount) external override onlyVault returns (uint256) {
         uint256 amountWithdrawn = morpho.withdraw(marketParams, amount, msg.sender, address(this));
         return amountWithdrawn;
     }
